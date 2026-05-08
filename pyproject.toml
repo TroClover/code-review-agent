@@ -1,0 +1,62 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "breview"
+version = "0.1.0"
+description = "BRT Code Review Agent - LLM-driven multi-agent code review system for autonomous driving teams"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.9"
+authors = [{ name = "BRT Team" }]
+
+dependencies = [
+    "pydantic>=2.0",
+    "pyyaml>=6.0",
+    "click>=8.0",
+    "rich>=13.0",
+    "httpx>=0.25",
+    "pygithub>=2.0",
+    "openai>=1.0",
+    "anthropic>=0.20",
+    "tiktoken>=0.5",
+    "gitpython>=3.1",
+]
+
+# Dashboard dependencies (install separately when needed):
+# fastapi>=0.100, uvicorn>=0.23, sqlalchemy>=2.0, aiosqlite>=0.19
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.21",
+    "pytest-cov>=4.0",
+    "ruff>=0.1",
+    "mypy>=1.5",
+    "pre-commit>=3.0",
+]
+
+[project.scripts]
+breview = "breview.cli.main:cli"
+
+[tool.ruff]
+target-version = "py39"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP", "B", "SIM", "RUF"]
+ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["breview"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
