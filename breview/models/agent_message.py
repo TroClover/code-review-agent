@@ -15,12 +15,10 @@ class AgentType(str, Enum):
     """Types of agents in the system."""
 
     ORCHESTRATOR = "orchestrator"
-    STYLE = "style"
     CODE_REVIEW = "code_review"
     SAFETY = "safety"
-    CONTEXT = "context"
     KNOWLEDGE = "knowledge"
-    REPORT = "report"
+    LINTER = "linter"
 
 
 class MessageType(str, Enum):
@@ -28,7 +26,6 @@ class MessageType(str, Enum):
 
     TASK = "task"  # Orchestrator → Agent: "do this work"
     RESULT = "result"  # Agent → Orchestrator: "here are my findings"
-    CONTEXT_DATA = "context_data"  # Context Agent → review agents: shared context
     ERROR = "error"  # Agent → Orchestrator: "something went wrong"
 
 

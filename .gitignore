@@ -50,3 +50,7 @@ reports/
 # Environment
 .env
 .env.local
+
+# Local config (contains API keys)
+.breview.yml
+.claude/worktrees/

@@ -1,4 +1,4 @@
-"""CLI entry point for breview command."""
+"""CLI entry point for breview command (v2)."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ console = Console()
 
 
 @click.group()
-@click.version_option(version="0.1.0")
+@click.version_option(version="0.2.0")
 def cli() -> None:
     """BRT Code Review Agent - LLM-driven code review for your PRs."""
     pass
@@ -29,11 +29,21 @@ def cli() -> None:
 @click.option("--branch", "-b", default=None, help="Branch to compare against (default: main)")
 @click.option("--staged", "-s", is_flag=True, help="Review staged changes only")
 @click.option("--config", "-c", default=None, help="Path to config file")
-@click.option("--role", "-r", default=None, type=click.Choice(["intern", "full_time", "senior"]), help="Author role override")
-@click.option("--no-llm", is_flag=True, help="Skip LLM review, use static checks only")
-def review(branch: Optional[str], staged: bool, config: Optional[str], role: Optional[str], no_llm: bool) -> None:
+@click.option("--profile", "-p", default=None, type=click.Choice(["strict", "standard", "relaxed"]), help="Review profile override")
+@click.option("--no-llm", is_flag=True, help="Skip LLM review, use linter + static checks only")
+@click.option("--no-linter", is_flag=True, help="Skip linter integration")
+@click.option("--cost-report", is_flag=True, help="Show cost report after review")
+def review(
+    branch: Optional[str],
+    staged: bool,
+    config: Optional[str],
+    profile: Optional[str],
+    no_llm: bool,
+    no_linter: bool,
+    cost_report: bool,
+) -> None:
     """Review code changes in the current branch."""
-    console.print(Panel("[bold blue]BRT Code Review Agent[/bold blue]", subtitle="Analyzing your code..."))
+    console.print(Panel("[bold blue]BRT Code Review Agent v2[/bold blue]", subtitle="Analyzing your code..."))
 
     try:
         repo_path = Path.cwd()
@@ -56,14 +66,19 @@ def review(branch: Optional[str], staged: bool, config: Optional[str], role: Opt
             diff_content=diff_content,
             config_path=config_path,
             author=author,
-            author_role=role or "full_time",
+            profile_name=profile,
             head_branch=current_branch,
             base_branch=target_branch,
             use_llm=not no_llm,
+            use_linter=not no_linter,
         ))
 
         # Display results
         _display_results(result)
+
+        # Show cost report if requested
+        if cost_report and "cost_summary" in result:
+            _display_cost_report(result["cost_summary"])
 
     except Exception as e:
         console.print_exception()
@@ -81,7 +96,7 @@ def init(repo_path: str) -> None:
         if not click.confirm("Overwrite?"):
             return
 
-    default_config = """# BRT Code Review Agent Configuration
+    default_config = """# BRT Code Review Agent Configuration (v2)
 
 llm:
   provider: openai
@@ -89,27 +104,69 @@ llm:
   # api_key: set via BREVIEW_LLM_API_KEY env var
   temperature: 0.1
   max_tokens: 4096
+
+cost:
   max_cost_per_review: 1.0
+  enable_cache: true
+  cache_ttl_hours: 24
 
-roles:
-  interns: []
-  seniors: []
+profiles:
+  - name: strict
+    description: "Main/release branches: all checks, low thresholds"
+    branch_patterns: ["main", "master", "release/*"]
+    thresholds:
+      block_on_critical: 1
+      block_on_major: 3
+      advisory_only: false
+    checks:
+      enable_style: true
+      enable_logic: true
+      enable_security: true
+      enable_performance: true
+      enable_safety: true
 
-agents:
-  intern_agents: [style, code_review, safety]
-  full_time_agents: [style, code_review, safety]
-  senior_agents: [code_review, safety]
+  - name: standard
+    description: "Feature branches: core checks, medium thresholds"
+    branch_patterns: ["*"]
+    thresholds:
+      block_on_critical: 3
+      block_on_major: 5
+      advisory_only: false
+    checks:
+      enable_style: true
+      enable_logic: true
+      enable_security: true
+      enable_performance: true
+      enable_safety: true
 
-thresholds:
-  block_on_critical: 1
-  block_on_major: 5
-  advisory_only: true
+  - name: relaxed
+    description: "Experimental/WIP branches: high-priority only"
+    branch_patterns: ["wip/*", "experiment/*", "draft/*"]
+    thresholds:
+      block_on_critical: 10
+      block_on_major: 20
+      advisory_only: true
+    checks:
+      enable_style: false
+      enable_logic: true
+      enable_security: true
+      enable_performance: false
+      enable_safety: true
 
-knowledge:
-  auto_generate_threshold: 3
-  human_comment_weight: 2.0
-  agent_comment_weight: 1.0
-  enable_feedback: true
+linter:
+  enabled: true
+  tools:
+    - name: ruff
+      enabled: true
+    - name: clang-tidy
+      enabled: true
+
+safety_domain:
+  enabled: false  # Set to true for autonomous driving code
+  sensor_validation: true
+  simulation_config: true
+  safety_critical_paths: true
+  realtime_constraints: true
 
 exemptions:
   file_patterns:
@@ -170,27 +227,32 @@ async def _run_review(
     diff_content: str,
     config_path: Optional[Path],
     author: str,
-    author_role: str,
+    profile_name: Optional[str],
     head_branch: str,
     base_branch: str,
     use_llm: bool,
+    use_linter: bool,
 ) -> dict:
     """Run the full review pipeline."""
     from ..config.loader import load_config
     from ..diff.parser import DiffParser
-    from ..models.review import AuthorRole, PRInfo, ReviewRequest
+    from ..models.review import PRInfo, ReviewProfile, ReviewRequest
 
     config = load_config(repo_path=config_path, global_path=None)
     parser = DiffParser()
     parsed_diff = parser.parse(diff_content)
 
-    # Map role string to enum
-    role_map = {
-        "intern": AuthorRole.INTERN,
-        "full_time": AuthorRole.FULL_TIME,
-        "senior": AuthorRole.SENIOR,
-    }
-    role_enum = role_map.get(author_role, AuthorRole.FULL_TIME)
+    # Determine profile
+    if profile_name:
+        profile = ReviewProfile(profile_name)
+    else:
+        from ..profiles.manager import ProfileManager
+        profile_manager = ProfileManager(
+            profiles=config.profiles if hasattr(config, "profiles") else [],
+            default_branch=getattr(config, "default_branch", "main"),
+        )
+        profile_config = profile_manager.get_profile(head_branch)
+        profile = ReviewProfile(profile_config.name)
 
     # Build review request
     request = ReviewRequest(
@@ -199,53 +261,89 @@ async def _run_review(
             pr_number=0,  # Local review, no PR number
             title=f"Local review: {head_branch} vs {base_branch}",
             author=author,
-            author_role=role_enum,
+            profile=profile,
             base_branch=base_branch,
             head_branch=head_branch,
         ),
         diff_content=diff_content,
+        skip_linter=not use_linter,
     )
 
     if use_llm:
         # Run full agent pipeline
         result = await _run_agent_pipeline(config, request, repo_path)
     else:
-        # Run static checks only
-        result = await _run_static_only(config, parsed_diff, request)
+        # Run linter + static checks only
+        result = await _run_linter_only(config, parsed_diff, request)
 
     return result
 
 
 async def _run_agent_pipeline(config, request, repo_path: Path) -> dict:
     """Run the full multi-agent pipeline."""
-    from ..agents import (
-        CodeReviewAgent, ContextAgent, KnowledgeAgent,
-        OrchestratorAgent, ReportAgent, SafetyAgent, StyleAgent,
-    )
+    from ..agents import CodeReviewAgent, KnowledgeAgent, OrchestratorAgent, SafetyAgent
     from ..agents.base import AgentType
+    from ..cost.monitor import CostMonitor
+    from ..degradation.manager import DegradationManager
+    from ..false_positive.store import FalsePositiveStore
     from ..knowledge.index import KnowledgeIndex
     from ..llm.client import create_llm_client
+    from ..profiles.manager import ProfileManager
 
     try:
         llm_client = create_llm_client(config)
     except ValueError as e:
-        console.print(f"[yellow]LLM not configured ({e}), falling back to static checks.[/yellow]")
+        console.print(f"[yellow]LLM not configured ({e}), falling back to linter-only.[/yellow]")
         from ..diff.parser import DiffParser
         parsed_diff = DiffParser().parse(request.diff_content)
-        return await _run_static_only(config, parsed_diff, request)
+        return await _run_linter_only(config, parsed_diff, request)
+
+    # Create components
+    cost_monitor = CostMonitor(
+        max_cost_per_review=getattr(config.cost, "max_cost_per_review", 1.0) if hasattr(config, "cost") else 1.0,
+        enable_cache=getattr(config.cost, "enable_cache", True) if hasattr(config, "cost") else True,
+    )
+
+    degradation_manager = DegradationManager()
 
     knowledge_index = KnowledgeIndex()
+    fp_store = None
+    if hasattr(config, "false_positive"):
+        fp_store = FalsePositiveStore(
+            storage_path=getattr(config.false_positive, "storage_path", ".breview/false_positives.json")
+        )
+
+    profile_manager = ProfileManager(
+        profiles=config.profiles if hasattr(config, "profiles") else [],
+        default_branch=getattr(config, "default_branch", "main"),
+    )
+
+    # Create agents
+    code_review_agent = CodeReviewAgent(config, llm_client)
+    code_review_agent.set_cost_monitor(cost_monitor)
+
+    safety_agent = SafetyAgent(config, llm_client)
+    safety_agent.set_cost_monitor(cost_monitor)
+
+    # Enable domain rules if configured
+    if hasattr(config, "safety_domain") and config.safety_domain.enabled:
+        safety_agent.enable_domain_rules(True)
 
     agents = {
-        AgentType.CONTEXT: ContextAgent(config, repo_path=str(repo_path)),
-        AgentType.STYLE: StyleAgent(config, llm_client),
-        AgentType.CODE_REVIEW: CodeReviewAgent(config, llm_client),
-        AgentType.SAFETY: SafetyAgent(config, llm_client),
-        AgentType.KNOWLEDGE: KnowledgeAgent(config, knowledge_index, llm_client),
-        AgentType.REPORT: ReportAgent(config),
+        AgentType.CODE_REVIEW: code_review_agent,
+        AgentType.SAFETY: safety_agent,
+        AgentType.KNOWLEDGE: KnowledgeAgent(config, knowledge_index),
     }
 
-    orchestrator = OrchestratorAgent(config, agents)
+    orchestrator = OrchestratorAgent(
+        config=config,
+        agents=agents,
+        profile_manager=profile_manager,
+        cost_monitor=cost_monitor,
+        degradation_manager=degradation_manager,
+        false_positive_store=fp_store,
+    )
+
     result = await orchestrator.run_pipeline(request)
 
     return {
@@ -269,24 +367,33 @@ async def _run_agent_pipeline(config, request, repo_path: Path) -> dict:
         "duration": result.duration_seconds,
         "agents_executed": result.agents_executed,
         "agents_failed": result.agents_failed,
+        "cost_summary": cost_monitor.get_cost_summary(),
+        "degraded": degradation_manager.is_degraded,
     }
 
 
-async def _run_static_only(config, parsed_diff, request) -> dict:
-    """Run static checks only (no LLM)."""
-    from ..agents.style_agent import StyleAgent
+async def _run_linter_only(config, parsed_diff, request) -> dict:
+    """Run linter + static checks only (no LLM)."""
+    from ..linter.runner import LinterRunner
 
-    style_agent = StyleAgent(config, llm_client=None)
+    linter_runner = None
+    if hasattr(config, "linter") and config.linter.enabled:
+        linter_configs = [
+            {"name": t.name, "enabled": t.enabled}
+            for t in config.linter.tools
+        ]
+        linter_runner = LinterRunner(linter_configs=linter_configs)
 
-    from ..models.agent_message import AgentMessage, AgentType
-
-    message = AgentMessage.create_task(
-        AgentType.ORCHESTRATOR,
-        AgentType.STYLE,
-        {"request": request.model_dump(), "context": {}},
-    )
-
-    result = await style_agent.execute(message)
+    all_issues = []
+    if linter_runner:
+        for file_change in parsed_diff.files:
+            if file_change.is_binary:
+                continue
+            try:
+                file_issues = linter_runner.run_linters(file_change.new_path)
+                all_issues.extend(file_issues)
+            except Exception as e:
+                console.print(f"[yellow]Linter failed for {file_change.new_path}: {e}[/yellow]")
 
     return {
         "issues": [
@@ -301,12 +408,12 @@ async def _run_static_only(config, parsed_diff, request) -> dict:
                 "suggestion": i.suggestion,
                 "agent": i.source_agent,
             }
-            for i in result.issues
+            for i in all_issues
         ],
-        "summary": f"Static review: {parsed_diff.total_files} files, +{parsed_diff.total_additions}/-{parsed_diff.total_deletions}",
-        "is_approved": not any(i["severity"] == "critical" for i in result.issues),
+        "summary": f"Linter-only review: {parsed_diff.total_files} files, +{parsed_diff.total_additions}/-{parsed_diff.total_deletions}",
+        "is_approved": not any(i["severity"] == "critical" for i in all_issues),
         "duration": 0.0,
-        "agents_executed": ["style"],
+        "agents_executed": ["linter"],
         "agents_failed": [],
     }
 
@@ -320,17 +427,16 @@ def _display_results(result: dict) -> None:
     is_approved = result.get("is_approved", True)
     duration = result.get("duration", 0)
     agents = result.get("agents_executed", [])
+    degraded = result.get("degraded", False)
 
-    if is_approved:
-        console.print(Panel(
-            f"[green]{summary}[/green]\n\nAgents: {', '.join(agents)} | Duration: {duration:.1f}s",
-            title="[green]Review Passed[/green]",
-        ))
-    else:
-        console.print(Panel(
-            f"[red]{summary}[/red]\n\nAgents: {', '.join(agents)} | Duration: {duration:.1f}s",
-            title="[red]Review Failed[/red]",
-        ))
+    status_title = "[green]Review Passed[/green]" if is_approved else "[red]Review Failed[/red]"
+    if degraded:
+        status_title += " [yellow](degraded mode)[/yellow]"
+
+    console.print(Panel(
+        f"{summary}\n\nAgents: {', '.join(agents)} | Duration: {duration:.1f}s",
+        title=status_title,
+    ))
 
     issues = result.get("issues", [])
     if not issues:
@@ -375,6 +481,18 @@ def _display_results(result: dict) -> None:
             console.print(f"  {issue.get('description', '')}")
             if issue.get("suggestion"):
                 console.print(f"  [green]Suggestion: {issue['suggestion']}[/green]")
+
+
+def _display_cost_report(cost_summary: dict) -> None:
+    """Display cost report."""
+    console.print()
+    console.print(Panel(
+        f"Current Review: ${cost_summary.get('current_review_cost_usd', 0):.4f}\n"
+        f"Budget: ${cost_summary.get('max_cost_per_review_usd', 0):.2f}\n"
+        f"Remaining: ${cost_summary.get('remaining_budget_usd', 0):.4f}\n"
+        f"Tokens Used: {cost_summary.get('current_review_tokens', 0)}",
+        title="[bold]Cost Report[/bold]",
+    ))
 
 
 if __name__ == "__main__":

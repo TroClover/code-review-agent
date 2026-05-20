@@ -53,6 +53,16 @@ class SafetyAgent(BaseAgent):
         self.llm_client = llm_client
         from ..context.builder import ContextBuilder
         self.context_builder = ContextBuilder()
+        self._cost_monitor = None
+        self._domain_enabled = False
+
+    def set_cost_monitor(self, cost_monitor) -> None:
+        """Set cost monitor for budget checking."""
+        self._cost_monitor = cost_monitor
+
+    def enable_domain_rules(self, enabled: bool = True) -> None:
+        """Enable/disable autonomous driving domain rules."""
+        self._domain_enabled = enabled
 
     async def execute(self, message: AgentMessage) -> AgentMessage:
         """Execute safety review on the diff."""
@@ -87,19 +97,39 @@ class SafetyAgent(BaseAgent):
         return AgentMessage.create_result(self.agent_type, static_issues + llm_issues)
 
     def _filter_safety_relevant(self, parsed_diff: ParsedDiff) -> list:
-        """Filter files that are safety-relevant."""
+        """Filter files that are safety-relevant.
+
+        All code files are considered for safety review (general security checks).
+        Domain-specific patterns only apply when domain rules are enabled.
+        """
         relevant = []
         for file_change in parsed_diff.files:
             if file_change.is_binary:
                 continue
-            if file_change.new_path.endswith(SAFETY_CRITICAL_EXTENSIONS) and self._is_safety_critical(file_change.new_path):
+            # All code files are relevant for general security checks
+            if file_change.new_path.endswith(SAFETY_CRITICAL_EXTENSIONS):
                 relevant.append(file_change)
         return relevant
 
     def _is_safety_critical(self, file_path: str) -> bool:
         """Check if a file is safety-critical based on path and name."""
         path_lower = file_path.lower()
-        return any(re.search(pattern, path_lower) for pattern in SAFETY_CRITICAL_PATTERNS)
+
+        # Always check for general security patterns
+        general_patterns = [
+            r"auth", r"password", r"secret", r"token", r"key",
+            r"security", r"crypto", r"hash", r"encrypt",
+            r"sql", r"database", r"db",
+            r"config", r"settings",
+        ]
+        if any(re.search(p, path_lower) for p in general_patterns):
+            return True
+
+        # Domain-specific patterns (only if enabled)
+        if self._domain_enabled:
+            return any(re.search(pattern, path_lower) for pattern in SAFETY_CRITICAL_PATTERNS)
+
+        return False
 
     def _run_static_checks(self, files: list) -> list[Issue]:
         """Run static safety checks without LLM."""
@@ -158,6 +188,11 @@ class SafetyAgent(BaseAgent):
 
     async def _review_file(self, file_change, author_role: str) -> list[Issue]:
         """Run LLM-based safety review on a file."""
+        # Check budget
+        if self._cost_monitor and not self._cost_monitor.check_budget():
+            logger.warning("Budget exceeded, skipping LLM review")
+            return []
+
         language = "cpp" if file_change.new_path.endswith((".cpp", ".cc", ".h", ".hpp")) else "python"
 
         file_ctx = {
@@ -181,8 +216,16 @@ class SafetyAgent(BaseAgent):
                 messages=messages,
                 model=self.config.llm.model if hasattr(self.config, "llm") else "gpt-4",
                 temperature=0.1,
-                max_tokens=4096,
+                max_tokens=8192,
             )
+            # Track cost
+            if self._cost_monitor:
+                self._cost_monitor.record_usage(
+                    input_tokens=response.input_tokens,
+                    output_tokens=response.output_tokens,
+                    cost_usd=response.cost_usd,
+                    model=response.model,
+                )
             return parse_llm_issues(response.content, "safety", file_change.new_path)
         except Exception as e:
             logger.warning(f"Safety review failed for {file_change.new_path}: {e}")

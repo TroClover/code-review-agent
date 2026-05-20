@@ -11,12 +11,15 @@ from pydantic import BaseModel, Field
 from .issue import Issue, Severity
 
 
-class AuthorRole(str, Enum):
-    """Author role determines review depth and strategy."""
+class ReviewProfile(str, Enum):
+    """Review profile determines review depth and thresholds.
 
-    INTERN = "intern"
-    FULL_TIME = "full_time"
-    SENIOR = "senior"
+    Configured per repository/branch, NOT per person.
+    """
+
+    STRICT = "strict"  # main/release branches: all checks, low thresholds
+    STANDARD = "standard"  # feature branches (default): core checks, medium thresholds
+    RELAXED = "relaxed"  # experimental/WIP branches: high-priority only, high thresholds
 
 
 class PRInfo(BaseModel):
@@ -27,7 +30,7 @@ class PRInfo(BaseModel):
     title: str = Field(description="PR title")
     description: str = Field(default="", description="PR description/body")
     author: str = Field(description="PR author username")
-    author_role: AuthorRole = Field(default=AuthorRole.FULL_TIME)
+    profile: ReviewProfile = Field(default=ReviewProfile.STANDARD, description="Review profile based on branch")
     base_branch: str = Field(default="main", description="Target branch")
     head_branch: str = Field(description="Source branch")
     head_sha: str = Field(default="", description="Head commit SHA")
@@ -43,6 +46,7 @@ class ReviewRequest(BaseModel):
     diff_content: str = Field(description="Raw git diff content")
     is_incremental: bool = Field(default=False, description="Whether this is a re-review of updated PR")
     agents_to_run: list[str] = Field(default_factory=list, description="Specific agents to invoke (empty = all)")
+    skip_linter: bool = Field(default=False, description="Skip linter integration")
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 

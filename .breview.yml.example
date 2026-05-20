@@ -1,0 +1,85 @@
+# BRT Code Review Agent Configuration (v2)
+# Copy this file to .breview.yml and set your API key
+
+llm:
+  provider: openai
+  model: deepseek-v4-flash
+  base_url: https://api.deepseek.com
+  # api_key: set via BREVIEW_LLM_API_KEY env var
+  temperature: 0.1
+  max_tokens: 4096
+
+cost:
+  max_cost_per_review: 1.0
+  enable_cache: true
+  cache_ttl_hours: 24
+
+profiles:
+  - name: strict
+    description: "Main/release branches: all checks, low thresholds"
+    branch_patterns: ["main", "master", "release/*"]
+    thresholds:
+      block_on_critical: 1
+      block_on_major: 3
+      advisory_only: false
+    checks:
+      enable_style: true
+      enable_logic: true
+      enable_security: true
+      enable_performance: true
+      enable_safety: true
+
+  - name: standard
+    description: "Feature branches: core checks, medium thresholds"
+    branch_patterns: ["*"]
+    thresholds:
+      block_on_critical: 3
+      block_on_major: 5
+      advisory_only: false
+    checks:
+      enable_style: true
+      enable_logic: true
+      enable_security: true
+      enable_performance: true
+      enable_safety: true
+
+  - name: relaxed
+    description: "Experimental/WIP branches: high-priority only"
+    branch_patterns: ["wip/*", "experiment/*", "draft/*"]
+    thresholds:
+      block_on_critical: 10
+      block_on_major: 20
+      advisory_only: true
+    checks:
+      enable_style: false
+      enable_logic: true
+      enable_security: true
+      enable_performance: false
+      enable_safety: true
+
+linter:
+  enabled: true
+  tools:
+    - name: ruff
+      enabled: true
+    - name: clang-tidy
+      enabled: true
+
+safety_domain:
+  enabled: false  # Set to true for autonomous driving code
+  sensor_validation: true
+  simulation_config: true
+  safety_critical_paths: true
+  realtime_constraints: true
+
+exemptions:
+  file_patterns:
+    - "*.pb.cc"
+    - "*.pb.h"
+    - "*.generated.*"
+    - "vendor/**"
+    - "third_party/**"
+  inline_marker: "breview: ignore"
+
+default_branch: main
+language: [python, cpp]
