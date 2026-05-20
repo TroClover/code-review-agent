@@ -212,11 +212,12 @@ class SafetyAgent(BaseAgent):
         messages = build_safety_review_prompt(file_ctx, safety_context, author_role)
 
         try:
+            max_tokens = getattr(self.config.llm, "max_tokens", 16384) if hasattr(self.config, "llm") else 16384
             response = await self.llm_client.complete(
                 messages=messages,
                 model=self.config.llm.model if hasattr(self.config, "llm") else "gpt-4",
                 temperature=0.1,
-                max_tokens=8192,
+                max_tokens=max_tokens,
             )
             # Track cost
             if self._cost_monitor:
