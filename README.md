@@ -1,4 +1,4 @@
-# BRT Code Review Agent v2
+# Code Review Agent v2
 
 LLM-driven code review system with linter integration and profile-based review strategies.
 
