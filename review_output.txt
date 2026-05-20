@@ -23,145 +23,141 @@ Review Results
 ## Review Summary
 
 Found **18** issue(s):
-- :rotating_light: 8 critical
-- :warning: 8 major
-- :bulb: 2 minor
+- :rotating_light: 6 critical
+- :warning: 9 major
+- :bulb: 3 minor
 
 :wrench: Linter: 1 issue(s)
 
-:moneybag: Cost: $0.0020 / $1.00
+:moneybag: Cost: $0.0023 / $1.00
 
 Issues Found: 18
 
-1. [CRITICAL] Hardcoded API key in source code
+1. [CRITICAL] Hardcoded API secret key
    File: sensor_processor.py:8
    Category: security
    Agent: code_review
-   Description: The API key is hardcoded as a literal string, exposing sensitive credentials. This is a security ris
-   Suggestion: Remove the hardcoded API key and use environment variables or a secrets manager. Replace with: API_K
+   Description: API_KEY is hardcoded in source code, exposing critical credentials. This poses a severe security ris
+   Suggestion: Remove the hardcoded key and load it from an environment variable or a secure config service. Exampl
 
-2. [CRITICAL] Imports placed after class definition causing syntax error
-   File: sensor_processor.py:6
-   Category: logic
-   Agent: code_review
-   Description: The 'import pickle' and 'import time' statements appear after the class header without proper indent
-   Suggestion: Move the imports to the top of the file before the class definition. Remove the duplicate imports an
-
-3. [CRITICAL] Unsafe deserialization using pickle.loads
-   File: sensor_processor.py:23
+2. [CRITICAL] Unsafe deserialization using pickle
+   File: sensor_processor.py:22
    Category: security
    Agent: code_review
-   Description: Using pickle.loads() on untrusted data can execute arbitrary code, leading to remote code execution 
-   Suggestion: Avoid pickle for untrusted data. Use a safer serialization format like JSON or, if necessary, valida
+   Description: The `pickle.loads` function can execute arbitrary code during deserialization, leading to remote cod
+   Suggestion: Avoid pickle for untrusted data. Use JSON, Protocol Buffers, or another safe serialization format. I
 
-4. [CRITICAL] SQL injection risk in simulated query
-   File: sensor_processor.py:30
+3. [CRITICAL] SQL injection in save_result
+   File: sensor_processor.py:28
    Category: security
    Agent: code_review
-   Description: The result is interpolated directly into a SQL query string, which could lead to SQL injection if th
-   Suggestion: Use parameterized queries to prevent injection. For example (using sqlite3): cursor.execute("INSERT 
+   Description: The query string is built by directly interpolating the `result` variable, allowing an attacker to m
+   Suggestion: Use parameterized queries (e.g., with placeholders like `?` in sqlite3). Example: `query = "INSERT I
 
-5. [CRITICAL] Hardcoded API Key
+4. [CRITICAL] Hardcoded API key
    File: sensor_processor.py:8
    Category: safety
    Agent: safety
-   Description: The API key is embedded directly in the source code as a string literal. This exposes sensitive cred
-   Suggestion: Store secrets in environment variables or a secure vault. Replace with:
-import os
-API_KEY = os.envir
+   Description: The file contains a hardcoded API key (API_KEY = "sk-1234567890abcdef") at module level, exposed in 
+   Suggestion: Remove hardcoded credentials. Use environment variables or a secure secret manager. Replace with:
+AP
 
-6. [CRITICAL] Path Traversal Vulnerability
-   File: sensor_processor.py:13
-   Category: safety
-   Agent: safety
-   Description: The `load_config` method opens a file using a user-provided `config_path` without any validation or 
-   Suggestion: Validate the path against a whitelist of allowed directories and reject paths containing '..' or abs
-
-7. [CRITICAL] Unsafe Deserialization with pickle
-   File: sensor_processor.py:17
-   Category: safety
-   Agent: safety
-   Description: Using `pickle.loads()` on untrusted data allows arbitrary code execution. An attacker can craft a ma
-   Suggestion: Replace pickle with a safe serialization format such as JSON or Protobuf. If pickle is absolutely re
-
-8. [CRITICAL] SQL Injection Risk in save_result
+5. [CRITICAL] Unsafe deserialization with pickle
    File: sensor_processor.py:22
    Category: safety
    Agent: safety
-   Description: The query string is built using an f-string that directly interpolates the `result` variable. Althou
-   Suggestion: Use parameterized queries or an ORM. Example using sqlite3:
-import sqlite3
-conn = sqlite3.connect('r
+   Description: The process_data method uses pickle.loads(data) on external data without any validation. Pickle can 
+   Suggestion: Avoid pickle for untrusted data. Use a safe serialization format like JSON (for structured data) or 
 
-9. [MAJOR] Path traversal vulnerability in load_config
+6. [CRITICAL] Syntax error: module-level statements between class header and body
+   File: sensor_processor.py:6
+   Category: safety
+   Agent: safety
+   Description: The diff shows import statements and an API_KEY assignment placed at module indentation level betwee
+   Suggestion: Move all imports and global constants to the top of the file, before the class definition. The code 
+
+7. [MAJOR] Path traversal vulnerability in load_config
    File: sensor_processor.py:17
    Category: security
    Agent: code_review
-   Description: The config_path is used directly in open() without validation. An attacker could supply a path like 
-   Suggestion: Validate and restrict the config path to an allowed directory. For example:
-    import os
-    allowe
+   Description: The config_path parameter is directly used to open a file without any validation or sanitization, al
+   Suggestion: Validate and restrict the path to a specific allowed directory. Use `os.path.abspath` and check that
 
-10. [MAJOR] Missing validation before accessing dictionary key
-   File: sensor_processor.py:25
+8. [MAJOR] Missing key validation after deserialization
+   File: sensor_processor.py:24
    Category: logic
    Agent: code_review
-   Description: The code accesses self.data['points'] without checking if the key exists or verifying the type of th
-   Suggestion: Add validation before accessing the key. For example:
-    if not isinstance(self.data, dict) or 'poi
+   Description: The code assumes `self.data['points']` exists after deserialization, which can raise a KeyError if t
+   Suggestion: Use `self.data.get('points')` with a default value or check `if 'points' in self.data:` before acces
 
-11. [MAJOR] File resource leak in save_result
-   File: sensor_processor.py:32
+9. [MAJOR] Blocking sleep in wait_for_data (critical path)
+   File: sensor_processor.py:35
    Category: performance
    Agent: code_review
-   Description: The file opened with open() is not closed, leading to a file descriptor leak that can exhaust system
-   Suggestion: Use a context manager (with statement) to ensure the file is properly closed. Replace:
-    with open
+   Description: The `time.sleep(5)` call blocks the calling thread for 5 seconds, which can introduce latency and re
+   Suggestion: Replace the busy-wait with an asynchronous wait (e.g., `asyncio.sleep`) or an event-driven approach 
 
-12. [MAJOR] Blocking sleep on critical path in wait_for_data
-   File: sensor_processor.py:38
+10. [MAJOR] O(n²) complexity in process_batch hot path
+   File: sensor_processor.py:40
    Category: performance
    Agent: code_review
-   Description: time.sleep(5) blocks the entire thread for 5 seconds, which can severely impact performance in an au
-   Suggestion: Replace blocking sleep with asynchronous waiting or use a non-blocking approach (e.g., asyncio.sleep
+   Description: The double loop over `items` for each item results in O(n²) runtime, which will severely degrade per
+   Suggestion: If all unordered pairs are needed, use `itertools.combinations(items, 2)`. If order matters, ensure 
 
-13. [MAJOR] O(n²) nested loop in process_batch leading to poor performance
-   File: sensor_processor.py:44
-   Category: performance
-   Agent: code_review
-   Description: The nested loop over all pairs of items results in O(n²) complexity, which can be very slow for larg
-   Suggestion: If duplicate pairs are not needed, use itertools.combinations to generate unique pairs in O(n²/2) bu
-
-14. [MAJOR] Missing Data Validation After Deserialization
-   File: sensor_processor.py:19
+11. [MAJOR] Missing input validation after deserialization
+   File: sensor_processor.py:24
    Category: safety
    Agent: safety
-   Description: After deserializing the data, the code accesses `self.data['points']` without verifying that the key
-   Suggestion: Add validation and error handling:
-if not isinstance(self.data, dict) or 'points' not in self.data:
+   Description: After deserialization, the code accesses self.data['points'] without checking if the key exists or i
+   Suggestion: Add validation before accessing fields:
+if not isinstance(self.data, dict) or 'points' not in self.d
 
-
-15. [MAJOR] Resource Leak: File Not Closed
-   File: sensor_processor.py:25
+12. [MAJOR] SQL injection risk in save_result
+   File: sensor_processor.py:29
    Category: safety
    Agent: safety
-   Description: The `save_result` method opens a file with `open()` but does not call `close()` and does not use a c
-   Suggestion: Use a `with` statement to ensure proper resource cleanup:
+   Description: The query string uses f-string interpolation with the result variable, which could contain malicious
+   Suggestion: Use parameterized queries. Example:
+query = "INSERT INTO results VALUES (%s)"
+cursor.execute(query, 
+
+13. [MAJOR] Resource leak in save_result (file not closed)
+   File: sensor_processor.py:31
+   Category: safety
+   Agent: safety
+   Description: The file 'f' is opened with open(path, 'w') but never closed, either explicitly or via a context man
+   Suggestion: Use a with statement to ensure proper closure:
 with open(path, 'w') as f:
-    f.write(str
+    f.write(str(result))
 
-16. [MAJOR] Blocking sleep in critical path (wait_for_data)
-   File: sensor_processor.py:28
+14. [MAJOR] Blocking sleep in critical processing path
+   File: sensor_processor.py:37
    Category: safety
    Agent: safety
-   Description: The `wait_for_data` method uses `time.sleep(5)` to block for 5 seconds. In a real-time sensor proces
-   Suggestion: Replace blocking sleep with an event-driven or polling mechanism with a timeout, or use a dedicated 
+   Description: The wait_for_data method calls time.sleep(5) which blocks the calling thread for 5 seconds. In a saf
+   Suggestion: Replace blocking sleep with a non-blocking mechanism such as asyncio.sleep (if using async code) or 
 
-17. [MINOR] E902: 系统找不到指定的文件。 (os error 2)
+15. [MAJOR] Inefficient O(n²) algorithm in hot path
+   File: sensor_processor.py:41
+   Category: safety
+   Agent: safety
+   Description: The process_batch method uses nested loops over all items to generate pairwise combinations, resulti
+   Suggestion: Use itertools.combinations for efficient generation:
+from itertools import combinations
+results = li
+
+16. [MINOR] E902: 系统找不到指定的文件。 (os error 2)
    File: sensor_processor.py:1
    Category: style
    Agent: linter
    Description: 系统找不到指定的文件。 (os error 2)
+
+17. [MINOR] Resource leak – file not closed in save_result
+   File: sensor_processor.py:30
+   Category: performance
+   Agent: code_review
+   Description: The file handle obtained via `open()` is never explicitly closed and not used in a context manager, 
+   Suggestion: Use a `with` statement to ensure the file is properly closed. Example: `with open(path, 'w') as f: f
 
 18. [MINOR] Sleep in code path
    File: sensor_processor.py:39
@@ -172,19 +168,19 @@ with open(path, 'w') as f:
 ============================================================
 Statistics
 ============================================================
-Duration: 42.33s
+Duration: 44.14s
 Agents executed: code_review, safety
 Agents failed: None
 Approved: False
-Blocking issues: 8
+Blocking issues: 6
 
 Issues by agent:
-  code_review: 9 issue(s)
-  safety: 8 issue(s)
+  code_review: 8 issue(s)
+  safety: 9 issue(s)
   linter: 1 issue(s)
 
 Cost Summary:
-  Current cost: $0.0020
+  Current cost: $0.0023
   Budget: $1.00
-  Remaining: $0.9980
-  Tokens used: 7845
+  Remaining: $0.9977
+  Tokens used: 9000

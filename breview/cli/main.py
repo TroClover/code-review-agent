@@ -33,6 +33,7 @@ def cli() -> None:
 @click.option("--no-llm", is_flag=True, help="Skip LLM review, use linter + static checks only")
 @click.option("--no-linter", is_flag=True, help="Skip linter integration")
 @click.option("--cost-report", is_flag=True, help="Show cost report after review")
+@click.option("--github", is_flag=True, help="GitHub Actions mode: publish review to PR")
 def review(
     branch: Optional[str],
     staged: bool,
@@ -41,6 +42,7 @@ def review(
     no_llm: bool,
     no_linter: bool,
     cost_report: bool,
+    github: bool,
 ) -> None:
     """Review code changes in the current branch."""
     console.print(Panel("[bold blue]BRT Code Review Agent v2[/bold blue]", subtitle="Analyzing your code..."))
@@ -49,6 +51,12 @@ def review(
         repo_path = Path.cwd()
         config_path = Path(config) if config else None
 
+        # GitHub Actions mode
+        if github:
+            asyncio.run(_run_github_review(config_path, use_llm=not no_llm, use_linter=not no_linter))
+            return
+
+        # Local mode
         # Get diff
         diff_content = _get_diff(repo_path, branch, staged)
         if not diff_content.strip():
@@ -493,6 +501,89 @@ def _display_cost_report(cost_summary: dict) -> None:
         f"Tokens Used: {cost_summary.get('current_review_tokens', 0)}",
         title="[bold]Cost Report[/bold]",
     ))
+
+
+async def _run_github_review(config_path: Optional[Path], use_llm: bool, use_linter: bool) -> None:
+    """Run review in GitHub Actions mode and publish results to PR."""
+    import os
+
+    from ..github.publisher import ReviewPublisher
+
+    # Get PR info from environment variables
+    pr_number = int(os.environ.get("PR_NUMBER", "0"))
+    repo_name = os.environ.get("REPO_NAME", "")
+    head_sha = os.environ.get("HEAD_SHA", "")
+    base_branch = os.environ.get("BASE_BRANCH", "main")
+    github_token = os.environ.get("GITHUB_TOKEN")
+
+    if not pr_number or not repo_name or not head_sha:
+        console.print("[red]Error: Missing PR_NUMBER, REPO_NAME, or HEAD_SHA environment variables[/red]")
+        sys.exit(1)
+
+    console.print(f"Reviewing PR #{pr_number} in {repo_name}")
+    console.print(f"Commit: {head_sha[:8]}")
+    console.print(f"Base: {base_branch}")
+
+    # Set pending status
+    publisher = ReviewPublisher(token=github_token)
+    await publisher.set_status(repo_name, head_sha, "pending", "Code review in progress...")
+
+    try:
+        # Get diff from git
+        repo_path = Path.cwd()
+        diff_content = _get_diff(repo_path, base_branch, False)
+
+        if not diff_content.strip():
+            console.print("[yellow]No changes found to review.[/yellow]")
+            await publisher.set_status(repo_name, head_sha, "success", "No changes to review")
+            return
+
+        # Run review
+        result = await _run_review(
+            repo_path=repo_path,
+            diff_content=diff_content,
+            config_path=config_path,
+            author="github-actions",
+            profile_name=None,
+            head_branch="HEAD",
+            base_branch=base_branch,
+            use_llm=use_llm,
+            use_linter=use_linter,
+        )
+
+        # Display results locally
+        _display_results(result)
+
+        # Publish to GitHub
+        issues = result.get("issues", [])
+        summary = result.get("summary", "Review completed")
+        is_approved = result.get("is_approved", True)
+
+        success = await publisher.publish_review(
+            repo=repo_name,
+            pr_number=pr_number,
+            sha=head_sha,
+            summary=summary,
+            issues=issues,
+            is_approved=is_approved,
+        )
+
+        if success:
+            console.print("[green]Review published to GitHub[/green]")
+        else:
+            console.print("[red]Failed to publish review to GitHub[/red]")
+
+        # Set final status
+        if is_approved:
+            await publisher.set_status(repo_name, head_sha, "success", f"Review passed ({len(issues)} issue(s))")
+        else:
+            critical_count = len([i for i in issues if i.get("severity") == "critical"])
+            await publisher.set_status(repo_name, head_sha, "failure", f"Review failed ({critical_count} critical issue(s))")
+
+    except Exception as e:
+        console.print_exception()
+        await publisher.set_status(repo_name, head_sha, "error", f"Review failed: {str(e)[:100]}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":
