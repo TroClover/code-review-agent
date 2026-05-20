@@ -34,6 +34,11 @@ class CodeReviewAgent(BaseAgent):
         self.llm_client = llm_client
         from ..context.builder import ContextBuilder
         self.context_builder = ContextBuilder()
+        self._cost_monitor = None
+
+    def set_cost_monitor(self, cost_monitor) -> None:
+        """Set cost monitor for budget checking."""
+        self._cost_monitor = cost_monitor
 
     async def execute(self, message: AgentMessage) -> AgentMessage:
         """Execute code review on the diff."""
@@ -66,6 +71,11 @@ class CodeReviewAgent(BaseAgent):
 
     async def _review_file(self, file_change, author_role: str) -> list[Issue]:
         """Review a single file for logic, security, and performance issues."""
+        # Check budget
+        if self._cost_monitor and not self._cost_monitor.check_budget():
+            logger.warning("Budget exceeded, skipping LLM review")
+            return []
+
         # Detect language
         language = self._detect_language(file_change.new_path)
 
@@ -94,8 +104,16 @@ class CodeReviewAgent(BaseAgent):
                 messages=messages,
                 model=self.config.llm.model if hasattr(self.config, "llm") else "gpt-4",
                 temperature=0.1,
-                max_tokens=4096,
+                max_tokens=8192,
             )
+            # Track cost
+            if self._cost_monitor:
+                self._cost_monitor.record_usage(
+                    input_tokens=response.input_tokens,
+                    output_tokens=response.output_tokens,
+                    cost_usd=response.cost_usd,
+                    model=response.model,
+                )
             return parse_llm_issues(response.content, "code_review", file_change.new_path)
         except Exception as e:
             logger.warning(f"Code review failed for {file_change.new_path}: {e}")

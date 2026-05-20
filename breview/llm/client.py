@@ -93,10 +93,13 @@ class OpenAIProvider(BaseLLMProvider):
         output_tokens = usage.completion_tokens if usage else 0
         cost = self.estimate_cost(input_tokens, output_tokens, model)
 
+        content = choice.message.content or ""
         logger.info(f"LLM response: {input_tokens} in / {output_tokens} out tokens")
+        if not content:
+            logger.warning(f"LLM response content is empty! finish_reason={choice.finish_reason}")
 
         return LLMResponse(
-            content=choice.message.content or "",
+            content=content,
             model=model,
             provider="openai",
             input_tokens=input_tokens,

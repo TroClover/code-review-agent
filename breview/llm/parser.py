@@ -54,7 +54,7 @@ def parse_llm_issues(
 
 
 def _extract_json(text: str) -> str:
-    """Extract JSON from text, handling markdown code blocks."""
+    """Extract JSON from text, handling markdown code blocks and truncated responses."""
     # Try to find JSON in code blocks
     json_block = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", text, re.DOTALL)
     if json_block:
@@ -64,6 +64,27 @@ def _extract_json(text: str) -> str:
     json_match = re.search(r"\[.*\]", text, re.DOTALL)
     if json_match:
         return json_match.group(0)
+
+    # Try to fix truncated JSON (missing closing brackets)
+    text = text.strip()
+    if text.startswith("[") and not text.endswith("]"):
+        # Try to close the JSON array
+        # Count open/close braces
+        open_braces = text.count("{") - text.count("}")
+        open_brackets = text.count("[") - text.count("]")
+
+        # Remove trailing incomplete object
+        last_complete = text.rfind("}")
+        if last_complete > 0:
+            text = text[:last_complete + 1]
+
+        # Add closing brackets
+        text += "]" * max(1, open_brackets)
+        if open_braces > 0:
+            text = text.rstrip("]") + "}" * open_braces + "]"
+
+        logger.warning("Attempted to fix truncated JSON response")
+        return text
 
     # Return as-is and hope for the best
     return text.strip()
