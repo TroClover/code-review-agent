@@ -507,6 +507,8 @@ async def _run_github_review(config_path: Optional[Path], use_llm: bool, use_lin
     """Run review in GitHub Actions mode and publish results to PR."""
     import os
 
+    import httpx
+
     from ..github.publisher import ReviewPublisher
 
     # Get PR info from environment variables
@@ -529,16 +531,18 @@ async def _run_github_review(config_path: Optional[Path], use_llm: bool, use_lin
     await publisher.set_status(repo_name, head_sha, "pending", "Code review in progress...")
 
     try:
-        # Get diff from git
-        repo_path = Path.cwd()
-        diff_content = _get_diff(repo_path, base_branch, False)
+        # Get diff from GitHub API (more reliable than local git)
+        diff_content = await _get_pr_diff_from_github(repo_name, pr_number, github_token)
 
         if not diff_content.strip():
             console.print("[yellow]No changes found to review.[/yellow]")
             await publisher.set_status(repo_name, head_sha, "success", "No changes to review")
             return
 
+        console.print(f"Diff loaded: {len(diff_content)} characters")
+
         # Run review
+        repo_path = Path.cwd()
         result = await _run_review(
             repo_path=repo_path,
             diff_content=diff_content,
@@ -584,6 +588,22 @@ async def _run_github_review(config_path: Optional[Path], use_llm: bool, use_lin
         console.print_exception()
         await publisher.set_status(repo_name, head_sha, "error", f"Review failed: {str(e)[:100]}")
         sys.exit(1)
+
+
+async def _get_pr_diff_from_github(repo: str, pr_number: int, token: str) -> str:
+    """Get PR diff from GitHub API."""
+    import httpx
+
+    async with httpx.AsyncClient() as client:
+        response = await client.get(
+            f"https://api.github.com/repos/{repo}/pulls/{pr_number}",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/vnd.github.v3.diff",
+            },
+        )
+        response.raise_for_status()
+        return response.text
 
 
 if __name__ == "__main__":
