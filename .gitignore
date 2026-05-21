@@ -54,3 +54,15 @@ reports/
 # Local config (contains API keys)
 .breview.yml
 .claude/worktrees/
+
+# Documentation (local only, keep README.md)
+CHAT_TRANSCRIPT.md
+CODING_STANDARD.md
+PROJECT_SUMMARY.md
+REQUIREMENTS.md
+TASKBOARD.md
+TEST_PLAN.md
+TODO.md
+review_output.txt
+llm_output.txt
+debug_*.py
