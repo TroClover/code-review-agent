@@ -60,21 +60,46 @@ class ReviewPublisher:
 
         try:
             async with httpx.AsyncClient() as client:
+                # First try with inline comments
+                review_data: dict[str, Any] = {
+                    "body": body,
+                    "event": event,
+                    "commit_id": sha,
+                }
+
+                # Only add comments if we have valid ones
+                if comments:
+                    review_data["comments"] = comments
+
                 response = await client.post(
                     f"{GITHUB_API_URL}/repos/{repo}/pulls/{pr_number}/reviews",
                     headers={
                         "Authorization": f"Bearer {self.token}",
                         "Accept": "application/vnd.github+json",
                     },
-                    json={
-                        "body": body,
-                        "event": event,
-                        "commit_id": sha,
-                        "comments": comments,
-                    },
+                    json=review_data,
                 )
+
+                # If inline comments fail, try without them
+                if response.status_code == 422 and comments:
+                    logger.warning("Inline comments failed, posting review without them")
+                    review_data.pop("comments", None)
+                    response = await client.post(
+                        f"{GITHUB_API_URL}/repos/{repo}/pulls/{pr_number}/reviews",
+                        headers={
+                            "Authorization": f"Bearer {self.token}",
+                            "Accept": "application/vnd.github+json",
+                        },
+                        json=review_data,
+                    )
+
                 response.raise_for_status()
                 logger.info(f"Published review to {repo}#{pr_number}")
+
+                # Post inline comments as separate comments if needed
+                if comments and "comments" not in review_data:
+                    await self._post_inline_comments_separately(client, repo, pr_number, comments)
+
                 return True
         except Exception as e:
             logger.error(f"Failed to publish review: {e}")
@@ -201,6 +226,30 @@ class ReviewPublisher:
                     }[sev]
                     lines.append(f"- {emoji} {counts[sev]} {sev}")
 
+            # Add issue details to summary
+            lines.append("")
+            lines.append("### Issues Found")
+            lines.append("")
+            for issue in issues[:10]:  # Limit to first 10 issues
+                severity = issue.get("severity", "info")
+                emoji = {
+                    "critical": ":rotating_light:",
+                    "major": ":warning:",
+                    "minor": ":bulb:",
+                    "info": ":information_source:",
+                }.get(severity, ":information_source:")
+                title = issue.get("title", "Untitled")
+                file_path = issue.get("file_path", "")
+                line = issue.get("line", "")
+                description = issue.get("description", "")[:200]
+
+                lines.append(f"{emoji} **[{severity.upper()}]** {title}")
+                if file_path:
+                    lines.append(f"  - File: `{file_path}:{line}`")
+                if description:
+                    lines.append(f"  - {description}")
+                lines.append("")
+
         lines.extend([
             "",
             "---",
@@ -208,3 +257,25 @@ class ReviewPublisher:
         ])
 
         return "\n".join(lines)
+
+    async def _post_inline_comments_separately(
+        self,
+        client: httpx.AsyncClient,
+        repo: str,
+        pr_number: int,
+        comments: list[dict[str, Any]],
+    ) -> None:
+        """Post inline comments as separate issue comments."""
+        for comment in comments[:10]:  # Limit to 10 comments
+            try:
+                body = f"**{comment['path']}:{comment['line']}**\n\n{comment['body']}"
+                await client.post(
+                    f"{GITHUB_API_URL}/repos/{repo}/issues/{pr_number}/comments",
+                    headers={
+                        "Authorization": f"Bearer {self.token}",
+                        "Accept": "application/vnd.github+json",
+                    },
+                    json={"body": body},
+                )
+            except Exception as e:
+                logger.warning(f"Failed to post inline comment: {e}")
