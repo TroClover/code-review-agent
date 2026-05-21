@@ -1,4 +1,4 @@
-"""CLI entry point for breview command (v2)."""
+"""CLI entry point for Pharos: Code Review Agent."""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ console = Console()
 @click.group()
 @click.version_option(version="0.2.0")
 def cli() -> None:
-    """BRT Code Review Agent - LLM-driven code review for your PRs."""
+    """Pharos: Code Review Agent - LLM-driven code review for your PRs."""
     pass
 
 
@@ -45,7 +45,7 @@ def review(
     github: bool,
 ) -> None:
     """Review code changes in the current branch."""
-    console.print(Panel("[bold blue]BRT Code Review Agent v2[/bold blue]", subtitle="Analyzing your code..."))
+    console.print(Panel("[bold blue]Pharos: Code Review Agent[/bold blue]", subtitle="Analyzing your code..."))
 
     try:
         repo_path = Path.cwd()

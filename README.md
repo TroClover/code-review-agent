@@ -1,6 +1,8 @@
-# Code Review Agent
+# Pharos: Code Review Agent
 
 LLM-driven code review system with linter integration and profile-based review strategies.
+
+> **Pharos** — 亚历山大灯塔，照亮代码中的暗礁，指引开发者安全航行。
 
 ## Features
 
